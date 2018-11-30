@@ -1537,7 +1537,7 @@ int CvGameTrade::GetIndexFromID (int iID)
 PlayerTypes CvGameTrade::GetOwnerFromID (int iID)
 {
 	int iIndex = GetIndexFromID(iID);
-	if (iIndex < -1)
+	if (iIndex < 0 || iIndex >= (int)m_aTradeConnections.size())
 	{
 		return NO_PLAYER;
 	}
@@ -1550,7 +1550,7 @@ PlayerTypes CvGameTrade::GetOwnerFromID (int iID)
 PlayerTypes CvGameTrade::GetDestFromID (int iID)
 {
 	int iIndex = GetIndexFromID(iID);
-	if (iIndex < -1)
+	if (iIndex < 0 || iIndex >= (int)m_aTradeConnections.size())
 	{
 		return NO_PLAYER;
 	}
@@ -4607,6 +4607,29 @@ int CvPlayerTrade::GetNumberOfCityStateTradeRoutes()
 			if(GET_PLAYER(pConnection->m_eDestOwner).isMinorCiv())
 			{
 				iNumConnections++;
+			}
+		}
+	}
+
+	return iNumConnections;
+}
+
+int CvPlayerTrade::GetNumberOfCityStateTradeRoutesFromCity(CvCity* pCity)
+{
+	CvGameTrade* pTrade = GC.getGame().GetGameTrade();
+	int iNumConnections = 0;
+	for (uint ui = 0; ui < pTrade->GetNumTradeConnections(); ui++)
+	{
+		const TradeConnection* pConnection = &(pTrade->GetTradeConnection(ui));
+
+		if (pConnection->m_eOriginOwner == m_pPlayer->GetID())
+		{
+			if (pConnection->m_iOriginX == pCity->getX() && pConnection->m_iOriginY == pCity->getY())
+			{
+				if (GET_PLAYER(pConnection->m_eDestOwner).isMinorCiv())
+				{
+					iNumConnections++;
+				}
 			}
 		}
 	}
