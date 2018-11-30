@@ -6845,7 +6845,7 @@ void CvCity::DoEventChoice(CityEventChoiceTypes eEventChoice, CityEventTypes eCi
 				// In hundreds
 				int iNumRecruits = pkEventChoiceInfo->getFreeScaledUnits();
 
-				GC.getGame().DoSpawnUnitsAroundTargetCity(getOwner(), this, iNumRecruits, false, false, false, false);
+				GC.getGame().DoSpawnUnitsAroundTargetCity(getOwner(), this, iNumRecruits, true, isCoastal(), false, false);
 			}
 			//Let's do our notification stuff here.
 			for(int iI = 0; iI < pkEventChoiceInfo->GetNumNotifications(); iI++)
@@ -9653,22 +9653,20 @@ void CvCity::ChangeResourceDemandedCountdown(int iChange)
 }
 
 //	--------------------------------------------------------------------------------
-int CvCity::getFoodTurnsLeft() const
+int CvCity::getFoodTurnsLeft(int iCorpMod) const
 {
 	VALIDATE_OBJECT
-	int iFoodLeft;
-	int iTurnsLeft;
+	int iFoodLeft = (growthThreshold() * 100 - getFoodTimes100());
+	int iDeltaPerTurn = foodDifferenceTimes100(true, iCorpMod);
 
-	iFoodLeft = (growthThreshold() * 100 - getFoodTimes100());
-
-	if(foodDifferenceTimes100() <= 0)
+	if(iDeltaPerTurn <= 0)
 	{
 		return iFoodLeft;
 	}
 
-	iTurnsLeft = (iFoodLeft / foodDifferenceTimes100());
+	int iTurnsLeft = (iFoodLeft / iDeltaPerTurn);
 
-	if((iTurnsLeft * foodDifferenceTimes100()) <  iFoodLeft)
+	if((iTurnsLeft * iDeltaPerTurn) <  iFoodLeft)
 	{
 		iTurnsLeft++;
 	}
@@ -15777,7 +15775,7 @@ int CvCity::foodDifference(bool bBottom) const
 
 
 //	--------------------------------------------------------------------------------
-int CvCity::foodDifferenceTimes100(bool bBottom, CvString* toolTipSink) const
+int CvCity::foodDifferenceTimes100(bool bBottom, int iCorpMod, CvString* toolTipSink) const
 {
 	VALIDATE_OBJECT
 	int iDifference;
@@ -15823,7 +15821,10 @@ int CvCity::foodDifferenceTimes100(bool bBottom, CvString* toolTipSink) const
 			GC.getGame().BuildProdModHelpText(toolTipSink, "TXT_KEY_FOODMOD_PLAYER", iCityGrowthMod);
 		}
 #if defined(MOD_BALANCE_CORE)
-		int iCorpMod = (GetTradeRouteCityMod(YIELD_FOOD));
+		//override default only if necessary - this call is quite expensive
+		if (iCorpMod==-1)
+			iCorpMod = (GetTradeRouteCityMod(YIELD_FOOD));
+
 		if(iCorpMod > 0)
 		{
 			iTotalMod += iCorpMod;
@@ -20460,10 +20461,6 @@ int CvCity::getThresholdAdditions(YieldTypes eYield) const
 	CvPlayer& kPlayer = GET_PLAYER(getOwner());
 	iModifier += kPlayer.GetTechDeviation();
 
-	//Increase threshold based on # of citizens and cities. Makes larger cities more and more difficult to maintain.
-	
-	iModifier += GC.getBALANCE_HAPPINESS_POP_MULTIPLIER();
-
 	switch (eYield)
 	{
 	case YIELD_CULTURE:
@@ -20485,6 +20482,13 @@ int CvCity::getThresholdAdditions(YieldTypes eYield) const
 		iModifier += kPlayer.GetCapitalUnhappinessModCBP();
 	}
 
+	int iPop = getPopulation();
+
+	int iPopMod = GC.getBALANCE_HAPPINESS_POP_MULTIPLIER() * iPop;
+	iPopMod /= 100 + (iPop + (iPop/2));
+
+	iModifier += iPopMod;
+
 	return iModifier;
 }
 int CvCity::getHappinessThresholdMod(YieldTypes eYield, int iMod, bool bForceGlobal) const
@@ -20493,20 +20497,8 @@ int CvCity::getHappinessThresholdMod(YieldTypes eYield, int iMod, bool bForceGlo
 
 	int iNegativeModifier = getThresholdSubtractions(eYield);
 	iNegativeModifier += iMod;
-	//iNegativeModifier *= -1;
 
-	int iPop = getPopulation();
-	int iThresholdMod = iPop;
-
-	iThresholdMod *= 100 + iPositiveModifier;
-	iThresholdMod /= 100 + (iPop + (iPop / 2));
-
-	iThresholdMod += iNegativeModifier;
-
-	//iThresholdMod *= 100 + (iPop + (iPop / 2));
-	//iThresholdMod /= 100 + iNegativeModifier;
-
-	return iThresholdMod;
+	return iPositiveModifier + iNegativeModifier;
 }
 //	--------------------------------------------------------------------------------
 int CvCity::getThresholdSubtractions(YieldTypes eYield) const
@@ -20759,7 +20751,7 @@ int CvCity::getUnhappinessFromScienceNeeded(int iMod, bool bForceGlobal) const
 {
 	int iThreshold = !bForceGlobal ? GetGlobalStaticYield(YIELD_SCIENCE) : GET_PLAYER(getOwner()).getGlobalAverage(YIELD_SCIENCE);
 
-	int iModifier = getHappinessThresholdMod(YIELD_SCIENCE, iMod, !bForceGlobal);
+	int iModifier = getHappinessThresholdMod(YIELD_SCIENCE, iMod, bForceGlobal);
 
 	iThreshold *= (iModifier + 100);
 	iThreshold /= 100;
@@ -20844,7 +20836,7 @@ int CvCity::getUnhappinessFromDefenseNeeded(int iMod, bool bForceGlobal) const
 
 		
 	
-	int iModifier = getHappinessThresholdMod(YIELD_PRODUCTION, iMod, !bForceGlobal);
+	int iModifier = getHappinessThresholdMod(YIELD_PRODUCTION, iMod, bForceGlobal);
 
 	iThreshold *= (iModifier + 100);
 	iThreshold /= 100;
@@ -20921,7 +20913,7 @@ int CvCity::getUnhappinessFromGoldNeeded(int iMod, bool bForceGlobal) const
 {
 	int iThreshold = !bForceGlobal ? GetGlobalStaticYield(YIELD_GOLD) : GET_PLAYER(getOwner()).getGlobalAverage(YIELD_GOLD);
 
-	int iModifier = getHappinessThresholdMod(YIELD_GOLD, iMod, !bForceGlobal);
+	int iModifier = getHappinessThresholdMod(YIELD_GOLD, iMod, bForceGlobal);
 
 	iThreshold *= (iModifier + 100);
 	iThreshold /= 100;
@@ -23859,6 +23851,9 @@ int CvCity::GetTradeRouteCityMod(YieldTypes eIndex) const
 	if (pkCorporationInfo->GetTradeRouteCityMod(eIndex) == 0)
 		return 0;
 
+	if (!IsHasOffice())
+		return 0;
+
 	int iMod = 0;
 	CvGameTrade* pGameTrade = GC.getGame().GetGameTrade();
 	for (uint ui = 0; ui < pGameTrade->GetNumTradeConnections(); ui++)
@@ -23871,11 +23866,10 @@ int CvCity::GetTradeRouteCityMod(YieldTypes eIndex) const
 		if(pGameTrade->GetOriginCity(pGameTrade->GetTradeConnection(ui)) != this)
 			continue;
 
-		CvCity* pOriginCity = CvGameTrade::GetOriginCity(pGameTrade->GetTradeConnection(ui));
 		CvCity* pDestCity = CvGameTrade::GetDestCity(pGameTrade->GetTradeConnection(ui));
-		if (pOriginCity != NULL && pDestCity != NULL)
+		if (pDestCity != NULL)
 		{
-			if (pOriginCity->IsHasOffice() && pDestCity->IsHasFranchise(eCorporation))
+			if (pDestCity->IsHasFranchise(eCorporation))
 			{
 				iMod += pkCorporationInfo->GetTradeRouteCityMod(eIndex);
 			}
@@ -29451,13 +29445,12 @@ void CvCity::doGrowth()
 	{
 		return;
 	}
-#if defined(MOD_BALANCE_CORE)
 	//No growth or starvation if in resistance
 	if(IsResistance())
 	{
 		return;
 	}
-#endif
+
 	int iFoodPerTurn100 = foodDifferenceTimes100();
 	int iFoodReqForGrowth = growthThreshold();
 
@@ -29473,11 +29466,6 @@ void CvCity::doGrowth()
 
 			pNotifications->Add(NOTIFICATION_STARVING, text.toUTF8(), summary.toUTF8(), getX(), getY(), -1);
 		}
-	}
-
-	if (GetID() == g_iCityToTrace)
-	{
-		OutputDebugString(CvString::format("Turn %d, Pre Growth food %d, change %d, threshold %d\n",GC.getGame().getGameTurn(),getFood(),iFoodPerTurn100/100, iFoodReqForGrowth).c_str());
 	}
 
 	changeFoodTimes100(iFoodPerTurn100);
@@ -29496,11 +29484,6 @@ void CvCity::doGrowth()
 
 			changeFood( -iFoodStoreChange );
 			changePopulation(1);
-
-			if (GetID() == g_iCityToTrace)
-			{
-				OutputDebugString(CvString::format("Growth used %d, new store %d, new pop %d, new threshold %d\n",iFoodStoreChange,getFood(),getPopulation(),growthThreshold()).c_str());
-			}
 
 			// Only show notification if the city is small
 			if(getPopulation() <= 5)

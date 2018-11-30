@@ -3958,7 +3958,7 @@ void CvUnit::DoLocationPromotions(bool bSpawn, CvPlot* pOldPlot, CvPlot* pNewPlo
 		CvPlot* pAdjacentPlot;
 		for(iI = 0; iI < NUM_DIRECTION_TYPES; ++iI)
 		{
-			pAdjacentPlot = plotDirection(plot()->getX(), plot()->getY(), ((DirectionTypes)iI));
+			pAdjacentPlot = plotDirection(pNewPlot->getX(), pNewPlot->getY(), ((DirectionTypes)iI));
 
 			if(pAdjacentPlot == NULL)
 				continue;
@@ -5350,15 +5350,6 @@ bool CvUnit::canMoveInto(const CvPlot& plot, int iMoveFlags) const
 		{
 			CvAssert(ePlotTeam != NO_TEAM);
 
-#if defined(MOD_EVENTS_WAR_AND_PEACE)
-			if(!(GET_TEAM(getTeam()).canDeclareWar(ePlotTeam, getOwner())))
-#else
-			if(!(GET_TEAM(getTeam()).canDeclareWar(ePlotTeam)))
-#endif
-			{
-				return false;
-			}
-
 			if(isHuman())
 			{
 				if(!(iMoveFlags & CvUnit::MOVEFLAG_DECLARE_WAR))
@@ -5367,6 +5358,15 @@ bool CvUnit::canMoveInto(const CvPlot& plot, int iMoveFlags) const
 				}
 			}
 			else
+			{
+				return false;
+			}
+
+#if defined(MOD_EVENTS_WAR_AND_PEACE)
+			if(!(GET_TEAM(getTeam()).canDeclareWar(ePlotTeam, getOwner())))
+#else
+			if(!(GET_TEAM(getTeam()).canDeclareWar(ePlotTeam)))
+#endif
 			{
 				return false;
 			}
@@ -5601,58 +5601,35 @@ bool CvUnit::jumpToNearestValidPlot()
 	CvAssertMsg(!isAttacking(), "isAttacking did not return false as expected");
 	CvAssertMsg(!isFighting(), "isFighting did not return false as expected");
 
-	//will fail for barbarians ...
-	CvCity* pNearestCity = GC.getMap().findCity(getX(), getY(), getOwner(),NO_TEAM,false,getDomainType()==DOMAIN_SEA);
-	if (!pNearestCity)
-		pNearestCity = GET_PLAYER(getOwner()).getCapitalCity();
-	
-	ReachablePlots reachablePlots;
-	if (pNearestCity)
-	{
-		SPathFinderUserData data(this, 0, 42);
-		data.ePathType = PT_UNIT_REACHABLE_PLOTS;
-		reachablePlots = GC.GetPathFinder().GetPlotsInReach(pNearestCity->plot(), data);
-	}
+	//remember we're calling this because the unit is trapped, so use really permissive flags
+	SPathFinderUserData data(this, CvUnit::MOVEFLAG_IGNORE_RIGHT_OF_PASSAGE|CvUnit::MOVEFLAG_IGNORE_STACKING, 23);
+	data.ePathType = PT_UNIT_REACHABLE_PLOTS;
+	ReachablePlots reachablePlots = GC.GetPathFinder().GetPlotsInReach(plot(), data);
 
 	int iBestValue = INT_MAX;
 	CvPlot* pBestPlot = NULL;
-
-	//inefficient but called infrequently
-	for(int iI = 0; iI < GC.getMap().numPlots(); iI++)
+	for (ReachablePlots::iterator it=reachablePlots.begin(); it!=reachablePlots.end(); ++it)
 	{
-		CvPlot* pLoopPlot = GC.getMap().plotByIndexUnchecked(iI);
+		CvPlot* pLoopPlot = GC.getMap().plotByIndexUnchecked(it->iPlotIndex);
 
-		//needs to be visible so we don't run into problems with stacking
-		if(!pLoopPlot || !pLoopPlot->isVisible(getTeam()))
-			continue;
-
-		if (pLoopPlot->isValidDomainForLocation(*this) && !pLoopPlot->isEnemyUnit(getOwner(),true,false) && !pLoopPlot->isNeutralUnit(getOwner(),true,false))
+		//need to check for everything, including invisible units
+		if(canMoveInto(*pLoopPlot, CvUnit::MOVEFLAG_DESTINATION))
 		{
-			//need to check for invisible units as well ...
-			if(canMoveInto(*pLoopPlot, CvUnit::MOVEFLAG_DESTINATION))
+			int iValue = it->iNormalizedDistance;
+
+			//avoid putting ships on lakes etc (only possible in degenerate cases anyway)
+			if (getDomainType() == DOMAIN_SEA )
+				if (pLoopPlot->area()->getNumTiles()<GC.getMIN_WATER_SIZE_FOR_OCEAN() || pLoopPlot->area()->getCitiesPerPlayer(getOwner()) == 0)
+					iValue += 20;
+
+			//avoid embarkation
+			if (getDomainType() == DOMAIN_LAND && pLoopPlot->needsEmbarkation(this))
+				iValue += 5;
+
+			if (iValue < iBestValue || (iValue == iBestValue && GC.getGame().getSmallFakeRandNum(3, *pLoopPlot)<2))
 			{
-				//if we cannot reach this plot, we would maroon our unit there - so skip it
-				if (!reachablePlots.empty() && reachablePlots.find(pLoopPlot->GetPlotIndex()) == reachablePlots.end())
-					continue;
-
-				int iValue = (plotDistance(getX(), getY(), pLoopPlot->getX(), pLoopPlot->getY()) * 2);
-
-				if(pNearestCity != NULL)
-					iValue += plotDistance(pLoopPlot->getX(), pLoopPlot->getY(), pNearestCity->getX(), pNearestCity->getY());
-
-				//avoid putting ships on lakes etc
-				if (getDomainType() == DOMAIN_SEA && pLoopPlot->area()->getCitiesPerPlayer(getOwner()) == 0)
-					iValue += 12;
-
-				//avoid embarkation
-				if (getDomainType() == DOMAIN_LAND && pLoopPlot->needsEmbarkation(this))
-					iValue += 6;
-
-				if (iValue < iBestValue || (iValue == iBestValue && GC.getGame().getSmallFakeRandNum(3, *pLoopPlot)<2))
-				{
-					iBestValue = iValue;
-					pBestPlot = pLoopPlot;
-				}
+				iBestValue = iValue;
+				pBestPlot = pLoopPlot;
 			}
 		}
 	}
@@ -18346,29 +18323,16 @@ int CvUnit::GetNumTilesRevealedThisTurn()
 }
 
 //	--------------------------------------------------------------------------------
-void CvUnit::SetSpottedEnemy(bool bValue)
-{
-	VALIDATE_OBJECT
-	m_bSpottedEnemy = bValue;
-}
-//	--------------------------------------------------------------------------------
-bool CvUnit::IsSpottedEnemy()
-{
-	VALIDATE_OBJECT
-	return m_bSpottedEnemy;
-}
-
-//	--------------------------------------------------------------------------------
 bool CvUnit::IsGainsYieldFromScouting() const
 {
 	VALIDATE_OBJECT
-		for (int iI = 0; iI < NUM_YIELD_TYPES; iI++)
+	for (int iI = 0; iI < YIELD_TOURISM; iI++)
+	{
+		if (getYieldFromScouting((YieldTypes)iI) > 0)
 		{
-			if (getYieldFromScouting((YieldTypes)iI) > 0)
-			{
-				return true;
-			}
+			return true;
 		}
+	}
 	return false;
 }
 
@@ -20191,6 +20155,15 @@ void CvUnit::setXY(int iX, int iY, bool bGroup, bool bUpdate, bool bShow, bool b
 
 					GET_PLAYER(eNewOwner).acquireCity(pNewCity, true, false); // will delete the pointer
 					pNewCity = NULL;
+
+					//it might happen that we liberate the city right after acquiring it
+					//in that case our unit is teleported somewhere or killed if that fails
+					//if it's killed, we have an invalid pointer here, let's hope that the plot() check catches it
+					//other workarounds: 
+					//	- don't instakill unit after failed teleport (might have other side effects)
+					//  - don't liberate immediately after conquest ...
+					if (plot() == NULL)
+						return;
 				}
 			}
 		}
@@ -25776,6 +25749,9 @@ int CvUnit::getTerrainDoubleMoveCount(TerrainTypes eIndex) const
 bool CvUnit::isTerrainDoubleMove(TerrainTypes eIndex) const
 {
 	const std::map<TerrainTypes, int>& m_map = m_terrainDoubleMoveCount.get();
+	if (m_map.empty())
+		return false;
+
 	std::map<TerrainTypes, int>::const_iterator it = m_map.find(eIndex);
 	if (it != m_map.end())
 		return it->second > 0;
@@ -25803,6 +25779,9 @@ void CvUnit::changeTerrainDoubleMoveCount(TerrainTypes eIndex, int iChange)
 int CvUnit::getFeatureDoubleMoveCount(FeatureTypes eIndex) const
 {
 	const std::map<FeatureTypes, int>& m_map = m_featureDoubleMoveCount.get();
+	if (m_map.empty())
+		return false;
+
 	std::map<FeatureTypes, int>::const_iterator it = m_map.find(eIndex);
 	if (it != m_map.end())
 		return it->second;
@@ -25815,6 +25794,9 @@ int CvUnit::getFeatureDoubleMoveCount(FeatureTypes eIndex) const
 bool CvUnit::isFeatureDoubleMove(FeatureTypes eIndex) const
 {
 	const std::map<FeatureTypes, int>& m_map = m_featureDoubleMoveCount.get();
+	if (m_map.empty())
+		return false;
+
 	std::map<FeatureTypes, int>::const_iterator it = m_map.find(eIndex);
 	if (it != m_map.end())
 		return it->second > 0;
@@ -25855,6 +25837,9 @@ int CvUnit::getTerrainHalfMoveCount(TerrainTypes eIndex) const
 bool CvUnit::isTerrainHalfMove(TerrainTypes eIndex) const
 {
 	const std::map<TerrainTypes, int>& m_map = m_terrainHalfMoveCount.get();
+	if (m_map.empty())
+		return false;
+
 	std::map<TerrainTypes, int>::const_iterator it = m_map.find(eIndex);
 	if (it != m_map.end())
 		return it->second > 0;
@@ -25894,6 +25879,9 @@ int CvUnit::getFeatureHalfMoveCount(FeatureTypes eIndex) const
 bool CvUnit::isFeatureHalfMove(FeatureTypes eIndex) const
 {
 	const std::map<FeatureTypes, int>& m_map = m_featureHalfMoveCount.get();
+	if (m_map.empty())
+		return false;
+
 	std::map<FeatureTypes, int>::const_iterator it = m_map.find(eIndex);
 	if (it != m_map.end())
 		return it->second > 0;
@@ -26053,6 +26041,9 @@ int CvUnit::getTerrainImpassableCount(TerrainTypes eIndex) const
 bool CvUnit::isTerrainImpassable(TerrainTypes eIndex) const
 {
 	const std::map<TerrainTypes, int>& m_map = m_terrainImpassableCount.get();
+	if (m_map.empty())
+		return false;
+
 	std::map<TerrainTypes, int>::const_iterator it = m_map.find(eIndex);
 	if (it != m_map.end())
 		return it->second > 0;
