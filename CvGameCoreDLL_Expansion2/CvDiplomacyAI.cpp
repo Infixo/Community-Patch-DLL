@@ -6410,7 +6410,7 @@ bool CvDiplomacyAI::IsPlayerDemandAttractive(PlayerTypes ePlayer)
 	}
 #endif
 
-	int iIdealValue = 2 * (GetPlayer()->GetDiplomacyAI()->GetMeanness() + GetPlayer()->GetCurrentEra());
+	int iIdealValue = 20 * (GetPlayer()->GetDiplomacyAI()->GetMeanness() + GetPlayer()->GetCurrentEra());
 	int Value = NUM_STRENGTH_VALUES - (int)GetPlayer()->GetDiplomacyAI()->GetPlayerMilitaryStrengthComparedToUs(ePlayer);
 	if (Value > 0)
 	{
@@ -6428,7 +6428,7 @@ bool CvDiplomacyAI::IsPlayerDemandAttractive(PlayerTypes ePlayer)
 
 	pDeal->ClearItems();
 
-	if (iActualValue < iIdealValue)
+	if (iActualValue < (iIdealValue/2))
 		return false;
 
 	bool bAlreadyPlanning = false;
@@ -8109,6 +8109,9 @@ void CvDiplomacyAI::SetMusteringForAttack(PlayerTypes ePlayer, bool bValue)
 	CvAssertMsg(ePlayer >= 0, "DIPLOMACY_AI: Invalid Player Index.  Please send Jon this with your last 5 autosaves and what changelist # you're playing.");
 	CvAssertMsg(ePlayer < MAX_CIV_PLAYERS, "DIPLOMACY_AI: Invalid Player Index.  Please send Jon this with your last 5 autosaves and what changelist # you're playing.");
 	m_pabMusteringForAttack[ePlayer] = bValue;
+
+	if (bValue)
+		DoTestDemandReady();
 }
 
 /// Player was attacked by another!  Change appropriate Diplomacy stuff
@@ -10740,7 +10743,7 @@ void CvDiplomacyAI::SetWarmongerThreat(PlayerTypes ePlayer, ThreatTypes eWarmong
 }
 
 /// Updates how much of a threat each player is to run amok and break everything
-void CvDiplomacyAI::DoUpdateWarmongerThreats()
+void CvDiplomacyAI::DoUpdateWarmongerThreats(bool bUpdateOnly)
 {
 	ThreatTypes eThreatType;
 
@@ -10802,52 +10805,54 @@ void CvDiplomacyAI::DoUpdateWarmongerThreats()
 				bUpdateLogsSpecial = true;
 			}
 
-			// decay score
+			if (!bUpdateOnly)
+			{
+				// decay score
 #if defined(MOD_API_EXTENSIONS)
-			int iDecayModifier = 100;
+				int iDecayModifier = 100;
 #if defined(MOD_CONFIG_AI_IN_XML)
-			// INCREASE if he's big and nasty, less so if he's not.
-			switch (GetPlayerMilitaryStrengthComparedToUs(eLoopPlayer))
-			{
-			case STRENGTH_IMMENSE:
-			case STRENGTH_POWERFUL:
-				iDecayModifier = GC.getWARMONGER_THREAT_APPROACH_DECAY_SMALL();
-				break;
-			case STRENGTH_AVERAGE:
-			case STRENGTH_STRONG:
-				iDecayModifier = GC.getWARMONGER_THREAT_APPROACH_DECAY_MEDIUM();
-				break;
-			case STRENGTH_WEAK:
-			case STRENGTH_POOR:
-			case STRENGTH_PATHETIC:
-				iDecayModifier = GC.getWARMONGER_THREAT_APPROACH_DECAY_LARGE();
-				break;
-			default:
-				break;
+				// INCREASE if he's big and nasty, less so if he's not.
+				switch (GetPlayerMilitaryStrengthComparedToUs(eLoopPlayer))
+				{
+				case STRENGTH_IMMENSE:
+				case STRENGTH_POWERFUL:
+					iDecayModifier = GC.getWARMONGER_THREAT_APPROACH_DECAY_SMALL();
+					break;
+				case STRENGTH_AVERAGE:
+				case STRENGTH_STRONG:
+					iDecayModifier = GC.getWARMONGER_THREAT_APPROACH_DECAY_MEDIUM();
+					break;
+				case STRENGTH_WEAK:
+				case STRENGTH_POOR:
+				case STRENGTH_PATHETIC:
+					iDecayModifier = GC.getWARMONGER_THREAT_APPROACH_DECAY_LARGE();
+					break;
+				default:
+					break;
+				}
+
+				int iDecayValue = GC.getWARMONGER_THREAT_PER_TURN_DECAY() * 100;
+
+				//Protect against positives.
+				if (iDecayValue > 0)
+					iDecayValue *= -1;
+
+				if (GC.getGame().GetGameLeagues()->IsWorldWar(GetPlayer()->GetID()) > 0)
+				{
+					iDecayModifier += GC.getWARMONGER_THREAT_PER_TURN_DECAY_INCREASED();
+				}
+				else if (GC.getGame().GetGameLeagues()->GetUnitMaintenanceMod(GetPlayer()->GetID()) > 0)
+				{
+					iDecayModifier += GC.getWARMONGER_THREAT_PER_TURN_DECAY_DECREASED();
+				}
+
+				iDecayValue *= iDecayModifier;
+				iDecayValue /= 100;
+
+				LogMajorCivWarmongerUpdate(eLoopPlayer, iDecayValue, bUpdateLogsSpecial);
+
+				ChangeOtherPlayerWarmongerAmountTimes100(eLoopPlayer, iDecayValue);
 			}
-
-			int iDecayValue = GC.getWARMONGER_THREAT_PER_TURN_DECAY() * 100;
-
-			//Protect against positives.
-			if (iDecayValue > 0)
-				iDecayValue *= -1;
-
-			if (GC.getGame().GetGameLeagues()->IsWorldWar(GetPlayer()->GetID()) > 0)
-			{
-				iDecayModifier += GC.getWARMONGER_THREAT_PER_TURN_DECAY_INCREASED();
-			}
-			else if (GC.getGame().GetGameLeagues()->GetUnitMaintenanceMod(GetPlayer()->GetID()) > 0)
-			{
-				iDecayModifier += GC.getWARMONGER_THREAT_PER_TURN_DECAY_DECREASED();
-			}
-
-			iDecayValue *= iDecayModifier;
-			iDecayValue /= 100;
-
-			LogMajorCivWarmongerUpdate(eLoopPlayer, iDecayValue, bUpdateLogsSpecial);
-
-
-			ChangeOtherPlayerWarmongerAmountTimes100(eLoopPlayer, iDecayValue);
 #endif
 #endif
 		}
@@ -15564,7 +15569,7 @@ void CvDiplomacyAI::ChangeOtherPlayerNumMinorsAttacked(PlayerTypes ePlayer, int 
 		iWarMongerValue = GC.getWARMONGER_THREAT_ATTACKED_WEIGHT_WORLD_PEACE();
 	}
 
-	iWarMongerValue *= (100 + GetOtherPlayerNumMinorsAttacked(ePlayer));
+	iWarMongerValue *= (100 + (GetOtherPlayerNumMinorsAttacked(ePlayer) * 25));
 	iWarMongerValue /= 100;
 
 	if (iWarMongerValue <= 0)
@@ -15607,6 +15612,8 @@ void CvDiplomacyAI::ChangeOtherPlayerNumMinorsAttacked(PlayerTypes ePlayer, int 
 #else
 	ChangeOtherPlayerWarmongerAmount(ePlayer, iChange * iWarMongerValue);
 #endif
+
+	DoUpdateWarmongerThreats(true);
 }
 
 /// How many Minors have we seen this Player conquer
@@ -15734,6 +15741,7 @@ void CvDiplomacyAI::ChangeOtherPlayerNumMajorsAttacked(PlayerTypes ePlayer, int 
 	ChangeOtherPlayerWarmongerAmount(ePlayer, iWarMongerValue);
 #endif
 
+	DoUpdateWarmongerThreats(true);
 }
 
 /// How many Majors have we seen this Player conquer
@@ -17180,14 +17188,14 @@ void CvDiplomacyAI::DoSendStatementToPlayer(PlayerTypes ePlayer, DiploStatementT
 			if(GET_TEAM(GET_PLAYER(ePlayer).getTeam()).canDeclareWar(GetPlayer()->getTeam()))
 #endif
 			{
-				if (GC.getGame().getSmallFakeRandNum(10, ePlayer) < GetWarmongerHate())
+				if (GC.getGame().getSmallFakeRandNum(10, ePlayer) < GET_PLAYER(ePlayer).GetDiplomacyAI()->GetWarmongerHate())
 				{
 					bValid = true;
 				}
 			}
 #endif
 #if defined(MOD_BALANCE_CORE)
-			if(bValid && ((GET_PLAYER(GetPlayer()->GetID()).GetDiplomacyAI()->GetBoldness() >  6) || GET_PLAYER(GetPlayer()->GetID()).GetDiplomacyAI()->GetMeanness() > 6))
+			if (bValid && ((GET_PLAYER(ePlayer).GetDiplomacyAI()->GetBoldness() >  7) || GET_PLAYER(ePlayer).GetDiplomacyAI()->GetMeanness() > 7))
 			{
 				if (m_pPlayer->GetDiplomacyAI()->DeclareWar(ePlayer))
 				{
@@ -17217,7 +17225,7 @@ void CvDiplomacyAI::DoSendStatementToPlayer(PlayerTypes ePlayer, DiploStatementT
 				GC.getGame().GetGameDeals().FinalizeDeal(GetPlayer()->GetID(), ePlayer, true);
 #endif
 #if defined(MOD_BALANCE_CORE)
-				if(GET_PLAYER(ePlayer).GetDiplomacyAI()->GetBoldness() > 5)
+				if(GET_PLAYER(ePlayer).GetDiplomacyAI()->GetBoldness() >= 8)
 				{
 					GET_PLAYER(ePlayer).GetDiplomacyAI()->DoDenouncePlayer(GetPlayer()->GetID());
 				}
@@ -20270,6 +20278,10 @@ void CvDiplomacyAI::DoMakeDemand(PlayerTypes ePlayer, DiploStatementTypes& eStat
 
 					if(GetNumTurnsSinceStatementSent(ePlayer, eTempStatement) >= iTurnsBetweenStatements)
 						eStatement = eTempStatement;
+
+					DoSendStatementToPlayer(ePlayer, eStatement, -1, pDeal);
+					LogStatementToPlayer(ePlayer, eStatement);
+					DoAddNewStatementToDiploLog(ePlayer, eStatement);
 				}
 				else
 				{
@@ -25740,7 +25752,7 @@ void CvDiplomacyAI::DoFromUIDiploEvent(PlayerTypes eFromPlayer, FromUIDiploEvent
 			else
 			{
 				strText = GetDiploStringForMessage(DIPLO_MESSAGE_SO_BE_IT);
-				gDLL->GameplayDiplomacyAILeaderMessage(eMyPlayer, DIPLO_UI_STATE_BLANK_DISCUSSION_MEAN_HUMAN, strText, LEADERHEAD_ANIM_HATE_NEGATIVE);
+				gDLL->GameplayDiplomacyAILeaderMessage(eMyPlayer, DIPLO_UI_STATE_BLANK_DISCUSSION, strText, LEADERHEAD_ANIM_HATE_NEGATIVE);
 			}
 		}
 
@@ -41014,7 +41026,7 @@ bool CvDiplomacyAI::WantsMapsFromPlayer(PlayerTypes ePlayer)
 
 	// Physically see how much the deal will cost us. Only send request if it's in an acceptable range
 	int iMapValue = GetPlayer()->GetDealAI()->GetMapValue(false, ePlayer, false);
-	if(iMapValue > 100 && iMapValue < 750)
+	if(iMapValue > 750)
 	{
 		return true;
 	}

@@ -664,7 +664,7 @@ void CvCityCitizens::DoTurn()
 		int iExcessHappiness = thisPlayer.GetExcessHappiness();
 		int iPotentialUnhappiness = m_pCity->getPotentialUnhappinessWithGrowthVal();
 		
-		bool bLockCity = (iExcessHappiness - iPotentialUnhappiness) <= -10;
+		bool bLockCity = (iExcessHappiness - iPotentialUnhappiness) <= -20;
 
 		m_bDiscourageGrowth = (iExcessHappiness - iPotentialUnhappiness) <= 0;
 
@@ -713,11 +713,6 @@ void CvCityCitizens::DoTurn()
 				{
 					SetFocusType(NO_CITY_AI_FOCUS_TYPE);
 				}
-				bForceCheck = true;
-			}
-			if (!IsNoAutoAssignSpecialists())
-			{
-				SetNoAutoAssignSpecialists(true);
 				bForceCheck = true;
 			}
 		}
