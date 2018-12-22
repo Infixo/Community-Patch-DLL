@@ -13520,7 +13520,7 @@ void CvPlayer::receiveGoody(CvPlot* pPlot, GoodyTypes eGoody, CvUnit* pUnit)
 
 		if(pBestCity != NULL)
 		{
-			pBestCity->changePopulation(iPop);
+			pBestCity->changePopulation(iPop, true, true);
 		}
 	}
 #if defined(MOD_BALANCE_CORE)
@@ -16189,7 +16189,11 @@ int CvPlayer::getProductionNeeded(UnitTypes eUnit) const
 
 	if (pkUnitEntry->GetProductionCostPerEra() != 0)
 	{
-		iProductionNeeded += pkUnitEntry->GetProductionCostPerEra() * GetCurrentEra();
+		int iEra = GetCurrentEra() - 1;
+		if (iEra > 0)
+		{
+			iProductionNeeded += pkUnitEntry->GetProductionCostPerEra() * iEra;
+		}
 	}
 
 	if(isMinorCiv())
@@ -22326,7 +22330,7 @@ int CvPlayer::GetHappinessFromLuxury(ResourceTypes eResource) const
 		}
 	}
 
-	return false;
+	return 0;
 }
 
 //	--------------------------------------------------------------------------------
@@ -26678,7 +26682,10 @@ void CvPlayer::doInstantYield(InstantYieldType iType, bool bCityFaith, GreatPers
 				}
 				case INSTANT_YIELD_TYPE_PILLAGE:
 				{
-					iValue += pLoopCity->GetYieldFromPillage(eYield);
+					if (bDomainSea)
+						iValue += pLoopCity->GetYieldFromPillageWater(eYield);
+					else
+						iValue += pLoopCity->GetYieldFromPillage(eYield);
 					break;
 				}
 				
@@ -27133,7 +27140,7 @@ void CvPlayer::doInstantYield(InstantYieldType iType, bool bCityFaith, GreatPers
 						}
 						else
 						{
-							pLoopCity->changePopulation(iValue);
+							pLoopCity->changePopulation(iValue, true, true);
 						}
 					}
 					break;
@@ -31780,6 +31787,15 @@ void CvPlayer::ChangeNoUnhappfromXSpecialists(int iChange)
 
 int CvPlayer::GetTechDeviation() const
 {
+
+	int iOurTech = GET_TEAM(getTeam()).GetTeamTechs()->GetNumTechsKnown();
+	int iNumTechs = GC.getNumTechInfos();
+
+	int iPercentResearched = iOurTech * 100;
+	iPercentResearched /= max(1, iNumTechs);
+
+	iPercentResearched /= 2;
+	/*
 	//Let's modify this based on the number of player techs - more techs means the threshold goes higher.
 	int iOurTech = GET_TEAM(getTeam()).GetTeamTechs()->GetNumTechsKnown();
 	int iAvgTech = GC.getGame().GetGlobalTechAvg();
@@ -31787,14 +31803,16 @@ int CvPlayer::GetTechDeviation() const
 	int iTechDeviation = iOurTech - iAvgTech;
 
 	//Using the num of techs to get a % - num of techs artificially increased to slow rate of runaways
-	int iTech = (int)((iTechDeviation * iTechDeviation) * /*.1*/ GC.getBALANCE_HAPPINESS_TECH_BASE_MODIFIER());
+	int iTech = (int)((iTechDeviation * iTechDeviation) * /*.1*/ //GC.getBALANCE_HAPPINESS_TECH_BASE_MODIFIER());
 
+	/*
 	if (iTech > 0 && iTech > (GC.getBALANCE_HAPPINESS_TECH_BASE_MODIFIER() * 100))
 		iTech = ((int)GC.getBALANCE_HAPPINESS_TECH_BASE_MODIFIER() * 100);
 	else if (iTech < 0 && iTech <= (GC.getBALANCE_HAPPINESS_TECH_BASE_MODIFIER() * -100))
 		iTech = ((int)GC.getBALANCE_HAPPINESS_TECH_BASE_MODIFIER() * -100);
+	*/
 
-	return iTech;
+	return iPercentResearched;
 }
 
 
@@ -43281,11 +43299,11 @@ void CvPlayer::processPolicies(PolicyTypes ePolicy, int iChange)
 		{
 			if(pPolicy->GetFreePopulation() > 0)
 			{
-				pLoopCity->changePopulation(pPolicy->GetFreePopulation());
+				pLoopCity->changePopulation(pPolicy->GetFreePopulation(), true, true);
 			}
 			if (pPolicy->GetFreePopulationCapital() > 0 && pLoopCity->isCapital())
 			{
-				pLoopCity->changePopulation(pPolicy->GetFreePopulationCapital());
+				pLoopCity->changePopulation(pPolicy->GetFreePopulationCapital(), true, true);
 			}
 		}
 		changeExtraMoves(pPolicy->GetExtraMoves() * iChange);
@@ -43364,8 +43382,10 @@ void CvPlayer::processPolicies(PolicyTypes ePolicy, int iChange)
 		changeYieldFromTech(eYield, (pPolicy->GetYieldFromTech(iI) * iChange));
 		if (pPolicy->IsOpener() && pPolicy->GetYieldFromTech(iI) * iChange > 0)
 		{
-			int iTechValue = GET_TEAM(getTeam() ).GetTeamTechs()->GetNumTechsKnown() * pPolicy->GetYieldFromTech(iI);
-			doInstantYield(INSTANT_YIELD_TYPE_INSTANT, false, NO_GREATPERSON, NO_BUILDING, iTechValue, false, NO_PLAYER, NULL, false, getCapitalCity(), false, true, true, eYield);
+			int iTechValue = (GET_TEAM(getTeam() ).GetTeamTechs()->GetNumTechsKnown()-1) * pPolicy->GetYieldFromTech(iI);
+
+			if (iTechValue > 0)
+				doInstantYield(INSTANT_YIELD_TYPE_INSTANT, false, NO_GREATPERSON, NO_BUILDING, iTechValue, false, NO_PLAYER, NULL, false, getCapitalCity(), false, true, true, eYield);
 		}
 		changeYieldFromBorderGrowth(eYield, (pPolicy->GetYieldFromBorderGrowth(iI) * iChange));
 		changeYieldGPExpend(eYield, (pPolicy->GetYieldGPExpend(iI) * iChange));
